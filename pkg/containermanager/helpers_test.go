@@ -106,3 +106,25 @@ func TestBuildXDGPaths(t *testing.T) {
 	assert.Equal(t, "/usr/local/share:/usr/share",
 		containermanager.BuildXDGPaths("DBX_TEST_XDG_UNSET_UNIQUE_9421", []string{"/usr/local/share", "/usr/share"}))
 }
+
+// TestFilterEnvVarsWithBlacklist pins the user-facing env blacklist: extra
+// names (including comma/colon-separated lists) are dropped on top of the
+// built-in exclusions, without affecting other variables.
+func TestFilterEnvVarsWithBlacklist(t *testing.T) {
+	t.Setenv("SSL_CERT_FILE", "/gnu/store/does-not-exist.crt")
+	t.Setenv("GUILE_LOAD_PATH", "/gnu/store/nowhere")
+	t.Setenv("DBX_TEST_STILL_KEEP", "keep")
+
+	has := func(prefix string) bool {
+		for _, e := range containermanager.FilterEnvVarsWithBlacklist([]string{"SSL_CERT_FILE,GULE_LOAD_PATH:GUILE_LOAD_PATH"}) {
+			if strings.HasPrefix(e, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+
+	assert.False(t, has("SSL_CERT_FILE="), "blacklisted var must be dropped")
+	assert.False(t, has("GUILE_LOAD_PATH="), "blacklisted var must be dropped (colon list)")
+	assert.True(t, has("DBX_TEST_STILL_KEEP="), "non-blacklisted var must survive")
+}

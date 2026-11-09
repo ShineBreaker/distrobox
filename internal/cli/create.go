@@ -111,6 +111,13 @@ of the same environment.`,
 				Value:   cfg.ContainerCustomHome,
 				Usage:   "select a custom HOME directory for the container. Useful to avoid host's home littering with temp files.",
 			},
+			&cli.StringFlag{
+				Name:  "home-src",
+				Usage: "bind a host directory over the container's home path, keeping the standard\n" +
+					"home location (e.g. /home/user) inside the container. Unlike --home, this does\n" +
+					"not change $HOME nor the user's passwd entry: apps that assume the standard\n" +
+					"path keep working, while the data lives in the given host directory.",
+			},
 			&cli.StringSliceFlag{
 				Name:  "volume",
 				Usage: "additional volumes to add to the container",
@@ -181,6 +188,13 @@ may require additional packages depending on the container image: https://github
 				Aliases: []string{"d"},
 				Usage:   "only print the container manager command generated",
 			},
+			&cli.StringSliceFlag{
+				Name:  "env-blacklist",
+				Usage: "environment variables NOT to forward into the container when entering it\n" +
+					"(comma or colon separated lists are accepted; DBX_ENV_BLACKLIST is honored too).\n" +
+					"useful on hosts with a non-FHS layout where exported variables point to\n" +
+					"paths that do not exist inside the container (e.g. SSL_CERT_FILE on NixOS/Guix)",
+			},
 			&cli.BoolFlag{
 				Name:  "absolutely-disable-root-password-i-am-really-positively-sure",
 				Usage: `⚠️ ⚠️ when setting up a rootful distrobox, this will skip user password setup, leaving it blank. ⚠️ ⚠️`,
@@ -229,6 +243,7 @@ func createAction(ctx context.Context, cmd *cli.Command, cfg *config.Values) err
 		AdditionalPackages:      cmd.StringSlice("additional-packages"),
 		Nopasswd:                cmd.Bool("absolutely-disable-root-password-i-am-really-positively-sure"),
 		ContainerUserCustomHome: cmd.String("home"),
+		ContainerHomeSrc:        cmd.String("home-src"),
 		Init:                    cmd.Bool("init"),
 		Nvidia:                  cmd.Bool("nvidia"),
 		ContainerInitHook:       cmd.String("init-hooks"),
@@ -239,6 +254,7 @@ func createAction(ctx context.Context, cmd *cli.Command, cfg *config.Values) err
 		Rootful:                 cmd.Bool("root"),
 		ContainerAlwaysPull:     cmd.Bool("pull"),
 		NonInteractive:          cmd.Bool("yes"),
+		EnvBlacklist:            envBlacklist(cmd),
 	}
 
 	// Setting Value: to the resolved default (so --help is honest) means

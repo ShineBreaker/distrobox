@@ -135,6 +135,15 @@ func (d *Docker) Create(
 		}
 	}
 
+	// ensure the home source directory exists before binding it over the
+	// container's home path
+	if opts.ContainerHomeSrc != "" && !containermanager.PathExists(opts.ContainerHomeSrc) {
+		//nolint:gosec // 0755 is the same as from distrobox v1, let's keep it for compatibility
+		if err := os.MkdirAll(opts.ContainerHomeSrc, 0755); err != nil {
+			return fmt.Errorf("failed to create home source directory: %w", err)
+		}
+	}
+
 	cmd := d.makeCreateCommand(
 		opts.ContainerName,
 		opts.ContainerImage,
@@ -143,6 +152,7 @@ func (d *Docker) Create(
 		opts.AdditionalPackages,
 		opts.AdditionalVolumes,
 		opts.ContainerUserCustomHome,
+		opts.ContainerHomeSrc,
 		opts.ContainerPlatform,
 		opts.Nopasswd,
 		opts.Init,
@@ -178,6 +188,7 @@ func (d *Docker) makeCreateCommand(
 	containerAdditionalPackages []string,
 	containerAdditionalVolumes []string,
 	containerUserCustomHome string,
+	containerHomeSrc string,
 	containerPlatform string,
 	nopasswd bool,
 	init bool,
@@ -265,7 +276,15 @@ func (d *Docker) makeCreateCommand(
 		"--volume",
 		fmt.Sprintf("%s:%s", distroboxHostexecPath, "/usr/bin/distrobox-host-exec:ro"),
 	)
-	options = append(options, "--volume", fmt.Sprintf("%s:%s%s", containerUserHome, containerUserHome, containermanager.BindPropagation()))
+	// Mount the user's home. Normally this is the host home mounted at the
+	// same path; with containerHomeSrc set, an isolated host directory is
+	// mounted over the container's standard home path instead (the home
+	// path itself is unchanged, so no passwd/usermod rewriting happens).
+	homeVolumeSource := containerUserHome
+	if containerHomeSrc != "" {
+		homeVolumeSource = containerHomeSrc
+	}
+	options = append(options, "--volume", fmt.Sprintf("%s:%s%s", homeVolumeSource, containerUserHome, containermanager.BindPropagation()))
 	options = append(options, "--volume", "/:/run/host/"+containermanager.BindPropagation())
 
 	if !unshareDevsys {
@@ -568,6 +587,7 @@ func (d *Docker) Enter(
 		options.CleanPath,
 		options.Verbose,
 		options.DryRun,
+		options.EnvBlacklist,
 	)
 	if err != nil {
 		return fmt.Errorf("err: %w", err)
@@ -817,6 +837,7 @@ func (d *Docker) generateEnterCommand(
 	cleanPath bool,
 	verbose bool,
 	dryRun bool,
+	envBlacklist []string,
 ) ([]string, *containermanager.InspectResult, error) {
 	cmd := []string{}
 
@@ -872,7 +893,7 @@ func (d *Docker) generateEnterCommand(
 	cmd = append(cmd, fmt.Sprintf("--env=CONTAINER_ID=%s", containerName))
 	cmd = append(cmd, fmt.Sprintf("--env=DISTROBOX_PATH=%s", executablePath))
 
-	for _, env := range containermanager.FilterEnvVars() {
+	for _, env := range containermanager.FilterEnvVarsWithBlacklist(envBlacklist) {
 		cmd = append(cmd, fmt.Sprintf("--env=%s", env))
 	}
 	// PATH handling

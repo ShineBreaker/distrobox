@@ -89,7 +89,10 @@ type CreateOptions struct {
 
 	ContainerUserCustomHome string
 	ContainerHomePrefix     string
-	Init                    bool
+	// ContainerHomeSrc binds a host directory over the container's standard
+	// home path without changing $HOME (no usermod/passwd rewrite).
+	ContainerHomeSrc string
+	Init             bool
 
 	Nvidia bool
 	DryRun bool
@@ -99,6 +102,11 @@ type CreateOptions struct {
 
 	ContainerAlwaysPull bool
 	NonInteractive      bool
+
+	// EnvBlacklist holds user-requested environment variable names to drop
+	// from the environment forwarded into the container. Honored by the
+	// enter path (also used by ephemeral containers).
+	EnvBlacklist []string
 }
 
 type CreateResult struct {
@@ -152,6 +160,7 @@ func (c *CreateCommand) Execute(ctx context.Context, opts CreateOptions) (*Creat
 			ContainerImage:          containerImage,
 			ContainerClone:          opts.ContainerClone,
 			ContainerUserCustomHome: containerUserCustomHome,
+			ContainerHomeSrc:        opts.ContainerHomeSrc,
 			ContainerHostname:       containerHostname,
 			ContainerPlatform:       opts.ContainerPlatform,
 			Nopasswd:                opts.Nopasswd,

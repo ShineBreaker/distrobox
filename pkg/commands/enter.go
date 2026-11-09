@@ -39,6 +39,9 @@ type EnterOptions struct {
 	Verbose         bool
 	CleanPath       bool
 	NoWorkDir       bool
+	// EnvBlacklist forwards user-requested env var names to drop before
+	// entering the container.
+	EnvBlacklist []string
 }
 
 type EnterCommand struct {
@@ -72,6 +75,7 @@ func (c *EnterCommand) Execute(ctx context.Context, opts EnterOptions) (*EnterRe
 		Verbose:         opts.Verbose,
 		CleanPath:       opts.CleanPath,
 		NoWorkDir:       opts.NoWorkDir,
+		EnvBlacklist:    opts.EnvBlacklist,
 	}
 
 	err := c.containerManager.Enter(ctx, cmdOpts, c.progress, c.printer)

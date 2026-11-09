@@ -109,6 +109,7 @@ func (c *EphemeralCommand) Execute(ctx context.Context, opts EphemeralOptions) e
 		ContainerName: name,
 		CustomCommand: opts.CustomCommand,
 		DryRun:        opts.DryRun,
+		EnvBlacklist:  opts.CreateOptions.EnvBlacklist,
 	}
 	if _, enterErr := c.enterCmd.Execute(ctx, enterOpts); enterErr != nil {
 		return fmt.Errorf("ephemeral: %w", enterErr)

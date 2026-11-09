@@ -85,6 +85,13 @@ func newEnterCommand(cfg *config.Values) *cli.Command {
 				Value:   cfg.SkipWorkDir,
 				Usage:   "always start the container from container's home directory",
 			},
+			&cli.StringSliceFlag{
+				Name:  "env-blacklist",
+				Usage: "environment variables NOT to forward into the container\n" +
+					"(comma or colon separated lists are accepted; DBX_ENV_BLACKLIST is honored too).\n" +
+					"useful on hosts with a non-FHS layout where exported variables point to\n" +
+					"paths that do not exist inside the container (e.g. SSL_CERT_FILE on NixOS/Guix)",
+			},
 		},
 		UseShortOptionHandling: false,
 		SkipFlagParsing:        false,
@@ -143,6 +150,7 @@ func enterAction(ctx context.Context, cmd *cli.Command, cfg *config.Values) erro
 		CleanPath:       cmd.Bool("clean-path"),
 		Verbose:         cmd.Bool("verbose"),
 		NoWorkDir:       cmd.Bool("no-workdir"),
+		EnvBlacklist:    envBlacklist(cmd),
 	}
 
 	progress := ui.NewProgress(os.Stderr)
@@ -155,6 +163,16 @@ func enterAction(ctx context.Context, cmd *cli.Command, cfg *config.Values) erro
 	}
 
 	return nil
+}
+
+// envBlacklist merges the --env-blacklist flag values with the
+// DBX_ENV_BLACKLIST environment variable (comma or colon separated).
+func envBlacklist(cmd *cli.Command) []string {
+	blacklist := cmd.StringSlice("env-blacklist")
+	if envList := os.Getenv("DBX_ENV_BLACKLIST"); envList != "" {
+		blacklist = append(blacklist, envList)
+	}
+	return blacklist
 }
 
 // offerCreateMissing implements the shell's "Create it now, out of image …?"

@@ -126,6 +126,13 @@ type CreateOptions struct {
 	ContainerImage          string
 	ContainerClone          string
 	ContainerUserCustomHome string
+	// ContainerHomeSrc is a host directory to bind-mount over the user's
+	// home *path inside* the container, without changing the home path
+	// itself: unlike ContainerUserCustomHome it does not alter $HOME nor
+	// the user's passwd entry inside the container. This gives the
+	// container an isolated home at the standard location
+	// (e.g. /home/user) while storing the data elsewhere on the host.
+	ContainerHomeSrc string
 	ContainerHostname       string
 	ContainerPlatform       string
 	ContainerUserHome       string
@@ -164,6 +171,11 @@ type EnterOptions struct {
 	NoWorkDir       bool
 	CleanPath       bool
 	Verbose         bool
+	// EnvBlacklist holds user-requested variable names to drop from the
+	// environment forwarded into the container (exact names, or
+	// comma/colon-separated lists). Consumed alongside the built-in
+	// FilterEnvVars exclusions.
+	EnvBlacklist []string
 }
 
 type RmOptions struct {
@@ -342,6 +354,19 @@ func BuildXDGPaths(envVar string, standardPaths []string) string {
 }
 
 func FilterEnvVars() []string {
+	return FilterEnvVarsWithBlacklist(nil)
+}
+
+// FilterEnvVarsWithBlacklist filters the current environment like
+// FilterEnvVars, additionally dropping every variable whose name matches one
+// of extraBlacklist (exact names or colon/comma-separated lists of names).
+//
+// This is the entry point for the user-facing env blacklist: hosts with a
+// non-FHS layout (NixOS, Guix System) export variables like SSL_CERT_FILE or
+// GUILE_LOAD_PATH pointing into host-only store paths; leaking them into the
+// container makes the container's own tools pick up paths that do not exist
+// inside it.
+func FilterEnvVarsWithBlacklist(extraBlacklist []string) []string {
 	result := []string{}
 
 	// Compile regex for XDG_.*_DIRS pattern
@@ -361,6 +386,17 @@ func FilterEnvVars() []string {
 		"XDG_SEAT",
 		"XDG_VTNR",
 		"_", // Variables starting with underscore
+	}
+
+	// Flatten the user blacklist: each entry may be a comma or colon
+	// separated list of variable names.
+	blacklist := map[string]struct{}{}
+	for _, entry := range extraBlacklist {
+		for _, name := range strings.FieldsFunc(entry, func(r rune) bool { return r == ',' || r == ':' }) {
+			if name = strings.TrimSpace(name); name != "" {
+				blacklist[name] = struct{}{}
+			}
+		}
 	}
 
 	for _, env := range os.Environ() {
@@ -391,7 +427,7 @@ func FilterEnvVars() []string {
 			}
 		}
 
-		if excluded || xdgDirsPattern.MatchString(key) {
+		if _, userExcluded := blacklist[key]; excluded || userExcluded || xdgDirsPattern.MatchString(key) {
 			continue
 		}
 
