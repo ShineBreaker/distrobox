@@ -224,6 +224,53 @@ if [ "$(basename "${host_command}")" = "xdg-open" ] ||
 	[ ! -t 1 ] ||
 	! tty > /dev/null 2>&1; then
 
+	# GUI launchers forwarded to the host need the host's DISPLAY and
+	# WAYLAND_DISPLAY to be set in the command string itself.
+	#
+	# We cannot pass them through host-spawn's -env whitelist:
+	#  1. variables not listed in -env are simply dropped by host-spawn, and
+	#  2. host-spawn rewrites the value of WAYLAND_DISPLAY by prepending
+	#     "/run/host", which is a container-side path that does not exist on
+	#     the host, so even whitelisted values arrive broken.
+	#
+	# Instead we ask the host for its current values and inject them via a
+	# shell wrapper: assignments embedded in the command string are passed
+	# verbatim, so the host's xdg-open receives a working display setup.
+	# For WAYLAND_DISPLAY we prefer an absolute socket path when the host
+	# exports a relative name, because the rewritten XDG_RUNTIME_DIR above
+	# is a /run/host path that is invalid on the host side.
+	if [ "$(basename "${host_command}")" = "xdg-open" ] ||
+		[ "$(basename "${host_command}")" = "gio" ] ||
+		[ "$(basename "${host_command}")" = "flatpak" ]; then
+			# shellcheck disable=SC2016 # the single quotes are intentional: the variables must be expanded on the host side, not here
+			host_display="$(host-spawn --no-pty sh -c 'printf "%s" "${DISPLAY:-}"' 2> /dev/null || printf '')"
+			# shellcheck disable=SC2016 # see above
+			host_wayland="$(host-spawn --no-pty sh -c 'printf "%s" "${WAYLAND_DISPLAY:-}"' 2> /dev/null || printf '')"
+			# shellcheck disable=SC2016 # see above
+			host_xdg_runtime_dir="$(host-spawn --no-pty sh -c 'printf "%s" "${XDG_RUNTIME_DIR:-}"' 2> /dev/null || printf '')"
+			case "${host_wayland}" in
+				/*) ;; # already absolute, use as-is
+				?*)
+					if [ -n "${host_xdg_runtime_dir}" ]; then
+						host_wayland="${host_xdg_runtime_dir}/${host_wayland}"
+					fi
+					;;
+				*) ;; # empty: host has no wayland session, skip it
+			esac
+			launch_env=""
+			if [ -n "${host_wayland}" ]; then
+				launch_env="WAYLAND_DISPLAY='${host_wayland}' "
+			fi
+			if [ -n "${host_display}" ]; then
+				launch_env="${launch_env}DISPLAY='${host_display}' "
+			fi
+			if [ -n "${launch_env}" ]; then
+				host-spawn --no-pty sh -c "${launch_env}exec \"\$0\" \"\$@\"" "${host_command}" "$@"
+				# Exit here, we don't continue execution
+				exit $?
+			fi
+		fi
+
 	host-spawn --no-pty "${host_command}" "$@"
 	# Exit here, we don't continue execution
 	exit $?
