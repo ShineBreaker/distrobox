@@ -46,7 +46,7 @@ func TestPodman_makeCreateCommandUsernsNoLimit(t *testing.T) {
 		t.Context(),
 		"my-container", "my-image",
 		[]string{}, "my-hostname", []string{}, []string{},
-		"", "",
+		"", "", "",
 		false, false, "", "",
 		false, false, false, false, false, false,
 		false, // dryRun
@@ -85,6 +85,7 @@ func TestPodman_makeCreateCommand(t *testing.T) {
 		containerAdditionalPackages,   // containerAdditionalPackages
 		containerAdditionalVolumes,    // containerAdditionalVolumes
 		"",                            // containerUserCustomHome
+		"",                            // containerHomeSrc
 		"",                            // containerPlatform
 		false,                         // nopasswd
 		true,                          // init
@@ -166,6 +167,7 @@ func TestPodman_makeCreateCommandRootful(t *testing.T) {
 		[]string{},
 		"",
 		"",
+		"",
 		false,
 		false,
 		"",
@@ -214,6 +216,7 @@ func TestPodman_makeCreateCommandNoInit(t *testing.T) {
 		"my-hostname",
 		[]string{},
 		[]string{},
+		"",
 		"",
 		"",
 		false,
@@ -266,6 +269,7 @@ func TestPodman_makeCreateCommandWithCrun(t *testing.T) {
 		[]string{},
 		"",
 		"",
+		"",
 		false,
 		false,
 		"",
@@ -313,6 +317,7 @@ func TestPodman_makeCreateCommandWithPlatform(t *testing.T) {
 		[]string{},
 		[]string{},
 		"",
+		"",            // containerHomeSrc
 		"linux/arm64", // containerPlatform
 		false,
 		false,
@@ -356,6 +361,7 @@ func TestPodman_makeCreateCommandWithCustomHome(t *testing.T) {
 		[]string{},
 		[]string{},
 		"/custom/home", // containerUserCustomHome
+		"",            // containerHomeSrc
 		"",
 		false,
 		false,
@@ -415,6 +421,7 @@ func TestPodman_makeCreateCommandWithAdditionalFlags(t *testing.T) {
 		[]string{},
 		"",
 		"",
+		"",
 		false,
 		false,
 		"",
@@ -463,6 +470,7 @@ func TestPodman_makeCreateCommandWithAdditionalPackages(t *testing.T) {
 		"my-hostname",
 		additionalPackages,
 		[]string{},
+		"",
 		"",
 		"",
 		false,
@@ -564,6 +572,7 @@ func TestPodman_makeCreateCommandUnshareOptions(t *testing.T) {
 				"my-hostname",
 				[]string{},
 				[]string{},
+				"",
 				"",
 				"",
 				false,
@@ -824,4 +833,47 @@ esac
 
 func podmanFakeInspectJSON(status string) string {
 	return `[{"Id":"container-id","State":{"Status":"` + status + `"},"Config":{"Labels":{"distrobox.unshare_groups":"0"},"Env":["HOME=/home/testuser","PATH=/usr/bin:/bin"]}}]`
+}
+
+// With containerHomeSrc set, the home volume source is replaced while the
+// container's home path (and $HOME) stays at the standard location.
+func TestPodman_makeCreateCommandWithHomeSrc(t *testing.T) {
+	podman := NewPodman(false, "sudo", false, false)
+	userEnv := &userenv.UserEnvironment{
+		User: "user", UserID: "1000", GroupID: "1000", Home: "/home/user", Shell: "/bin/sh",
+	}
+
+	cmd := podman.makeCreateCommand(
+		t.Context(),
+		"my-container",
+		"my-image",
+		[]string{},
+		"my-hostname",
+		[]string{},
+		[]string{},
+		"", // containerUserCustomHome
+		"/var/lib/distrobox-homes/my-container", // containerHomeSrc
+		"", // containerPlatform
+		false,
+		false,
+		"", "",
+		false,
+		false,
+		false,
+		false,
+		false,
+		false,
+		false, // dryRun
+		userEnv,
+		"/path/to/distrobox-init",
+		"/path/to/distrobox-export",
+		"/path/to/distrobox-hostexec",
+	)
+
+	cmdStr := strings.Join(cmd, " ")
+
+	// The isolated home source is mounted over the standard home path.
+	assert.Contains(t, cmdStr, "--volume /var/lib/distrobox-homes/my-container:/home/user")
+	// $HOME is NOT overridden (no custom home semantics).
+	assert.NotContains(t, cmdStr, "--env HOME=/var/lib/distrobox-homes/my-container")
 }

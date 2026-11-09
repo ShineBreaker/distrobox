@@ -60,6 +60,7 @@ func TestDocker_makeCreateCommand(t *testing.T) {
 		containerAdditionalPackages,   // containerAdditionalPackages
 		containerAdditionalVolumes,    // containerAdditionalVolumes
 		"",                            // containerUserCustomHome
+		"",                            // containerHomeSrc
 		"",                            // containerPlatform
 		false,                         // nopasswd
 		true,                          // init
