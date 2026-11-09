@@ -26,6 +26,14 @@ graphical apps (X11/Wayland), and audio.
 				this will be useful to either rename an existing distrobox or have multiple copies
 				of the same environment.
 	--home/-H:		select a custom HOME directory for the container. Useful to avoid host's home littering with temp files.
+	--home-src:		bind a host directory over the container's home path, keeping the standard
+					home location (e.g. /home/user) inside the container. Unlike --home, this does
+					not change $HOME nor the user's passwd entry: apps that assume the standard
+					path keep working, while the data lives in the given host directory.
+	--env-blacklist:	environment variables NOT to forward into the container when entering it
+					(comma or colon separated lists are accepted; DBX_ENV_BLACKLIST is honored too).
+					useful on hosts with a non-FHS layout where exported variables point to
+					paths that do not exist inside the container (e.g. SSL_CERT_FILE on NixOS/Guix)
 	--volume:		additional volumes to add to the container
 	--additional-flags/-a:	additional flags to pass to the container manager command
 	--additional-packages/-ap:	additional packages to install during initial container setup
