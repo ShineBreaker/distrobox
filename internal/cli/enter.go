@@ -150,7 +150,7 @@ func enterAction(ctx context.Context, cmd *cli.Command, cfg *config.Values) erro
 		CleanPath:       cmd.Bool("clean-path"),
 		Verbose:         cmd.Bool("verbose"),
 		NoWorkDir:       cmd.Bool("no-workdir"),
-		EnvBlacklist:    envBlacklist(cmd),
+		EnvBlacklist:    envBlacklist(cmd, cfg),
 	}
 
 	progress := ui.NewProgress(os.Stderr)
@@ -166,9 +166,15 @@ func enterAction(ctx context.Context, cmd *cli.Command, cfg *config.Values) erro
 }
 
 // envBlacklist merges the --env-blacklist flag values with the
-// DBX_ENV_BLACKLIST environment variable (comma or colon separated).
-func envBlacklist(cmd *cli.Command) []string {
+// DBX_ENV_BLACKLIST environment variable and the env_blacklist config key
+// (comma or colon separated). On top of this, variables whose values
+// reference host-only store paths (/gnu/, /nix/, /run/current-system) are
+// always dropped automatically — see FilterEnvVarsWithBlacklist.
+func envBlacklist(cmd *cli.Command, cfg *config.Values) []string {
 	blacklist := cmd.StringSlice("env-blacklist")
+	if cfg != nil && cfg.EnvBlacklist != "" {
+		blacklist = append(blacklist, cfg.EnvBlacklist)
+	}
 	if envList := os.Getenv("DBX_ENV_BLACKLIST"); envList != "" {
 		blacklist = append(blacklist, envList)
 	}

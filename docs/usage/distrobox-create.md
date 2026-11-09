@@ -31,9 +31,11 @@ graphical apps (X11/Wayland), and audio.
 					not change $HOME nor the user's passwd entry: apps that assume the standard
 					path keep working, while the data lives in the given host directory.
 	--env-blacklist:	environment variables NOT to forward into the container when entering it
-					(comma or colon separated lists are accepted; DBX_ENV_BLACKLIST is honored too).
-					useful on hosts with a non-FHS layout where exported variables point to
-					paths that do not exist inside the container (e.g. SSL_CERT_FILE on NixOS/Guix)
+					(comma or colon separated lists, trailing * wildcards and the DBX_ENV_BLACKLIST
+					variable / env_blacklist config key are honored too).
+					variables whose values reference host-only store paths (/gnu/, /nix/,
+					/run/current-system) are always dropped automatically — this flag is for
+					extra, name-based exclusions
 	--volume:		additional volumes to add to the container
 	--additional-flags/-a:	additional flags to pass to the container manager command
 	--additional-packages/-ap:	additional packages to install during initial container setup

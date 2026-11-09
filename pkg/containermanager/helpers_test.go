@@ -128,3 +128,32 @@ func TestFilterEnvVarsWithBlacklist(t *testing.T) {
 	assert.False(t, has("GUILE_LOAD_PATH="), "blacklisted var must be dropped (colon list)")
 	assert.True(t, has("DBX_TEST_STILL_KEEP="), "non-blacklisted var must survive")
 }
+
+// TestFilterEnvVarsDropsHostOnlyStorePaths pins the value-based rule: any
+// variable whose value references /gnu/, /nix/ or /run/current-system is
+// dropped automatically, regardless of its name; variables with normal
+// FHS values survive.
+func TestFilterEnvVarsDropsHostOnlyStorePaths(t *testing.T) {
+	t.Setenv("SSL_CERT_FILE", "/gnu/store/aaa-ca-certificates.crt")
+	t.Setenv("GUILE_LOAD_PATH", "/gnu/store/bbb-guile/share")
+	t.Setenv("SOMETHING_NIXY", "/nix/store/xxx-profile/lib")
+	t.Setenv("SYSTEM_WIDE", "/run/current-system/profile/bin")
+	t.Setenv("DBX_TEST_NORMAL", "/usr/share/data")
+	t.Setenv("NOTES_DIR", "/home/user/gnu-project-notes") // contains "gnu" but not "/gnu/"
+
+	has := func(prefix string) bool {
+		for _, e := range containermanager.FilterEnvVars() {
+			if strings.HasPrefix(e, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+
+	assert.False(t, has("SSL_CERT_FILE="), "value in /gnu/store must be dropped")
+	assert.False(t, has("GUILE_LOAD_PATH="), "value in /gnu/store must be dropped")
+	assert.False(t, has("SOMETHING_NIXY="), "value in /nix/store must be dropped")
+	assert.False(t, has("SYSTEM_WIDE="), "value in /run/current-system must be dropped")
+	assert.True(t, has("DBX_TEST_NORMAL="), "normal FHS value must survive")
+	assert.True(t, has("NOTES_DIR="), "substring 'gnu' outside a path marker must survive")
+}

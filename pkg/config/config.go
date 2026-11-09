@@ -51,6 +51,11 @@ type Values struct {
 	SkipWorkDir         bool
 	UsernsNoLimit       bool
 	RmCustomHome        bool
+	// EnvBlacklist is the config-file/env-var source for environment
+	// variable names to drop when entering containers (comma or colon
+	// separated; trailing * wildcards allowed, e.g. GUIX_*). Merged with
+	// per-invocation --env-blacklist flags.
+	EnvBlacklist string
 
 	// ScriptsDir is the directory path where the helper scripts
 	// (distrobox-init, distrobox-export, distrobox-host-exec) are stored.
@@ -74,6 +79,7 @@ func defaultsMap() map[string]string {
 		"container_skip_workdir":   "false",
 		"userns_nolimit":           "false",
 		"rm_home":                  "false",
+		"env_blacklist":            "",
 	}
 }
 
@@ -122,6 +128,7 @@ func toStruct(configMap map[string]string) *Values {
 		SkipWorkDir:           toBool(configMap["container_skip_workdir"]),
 		UsernsNoLimit:         toBool(configMap["userns_nolimit"]),
 		RmCustomHome:          toBool(configMap["rm_home"]),
+		EnvBlacklist:          configMap["env_blacklist"],
 		ScriptsDir:            resolveScriptsDir(),
 	}
 }
@@ -262,6 +269,9 @@ func readEnv() map[string]string {
 	}
 	if value, exists := os.LookupEnv("DBX_CONTAINER_RM_CUSTOM_HOME"); exists {
 		envConfig["rm_home"] = value
+	}
+	if value, exists := os.LookupEnv("DBX_ENV_BLACKLIST"); exists {
+		envConfig["env_blacklist"] = value
 	}
 
 	return envConfig

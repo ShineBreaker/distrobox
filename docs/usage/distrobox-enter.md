@@ -20,9 +20,11 @@ If using it inside a script, an application, or a service, you can specify the
 	--no-tty/-T:		do not instantiate a tty (alias: -H)
 	--no-workdir/-nw:	always start the container from container's home directory
 	--env-blacklist:	environment variables NOT to forward into the container
-					(comma or colon separated lists are accepted; DBX_ENV_BLACKLIST is honored too).
-					useful on hosts with a non-FHS layout where exported variables point to
-					paths that do not exist inside the container (e.g. SSL_CERT_FILE on NixOS/Guix)
+					(comma or colon separated lists, trailing * wildcards and the DBX_ENV_BLACKLIST
+					variable / env_blacklist config key are honored too).
+					variables whose values reference host-only store paths (/gnu/, /nix/,
+					/run/current-system) are always dropped automatically — this flag is for
+					extra, name-based exclusions
 	--clean-path/-c:	reset PATH inside the container to FHS standard
 	--additional-flags/-a:	additional flags to pass to the container manager command
 	--yes/-y:		non-interactive, auto-create the container if it does not exist

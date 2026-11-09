@@ -254,7 +254,7 @@ func createAction(ctx context.Context, cmd *cli.Command, cfg *config.Values) err
 		Rootful:                 cmd.Bool("root"),
 		ContainerAlwaysPull:     cmd.Bool("pull"),
 		NonInteractive:          cmd.Bool("yes"),
-		EnvBlacklist:            envBlacklist(cmd),
+		EnvBlacklist:            envBlacklist(cmd, cfg),
 	}
 
 	// Setting Value: to the resolved default (so --help is honest) means

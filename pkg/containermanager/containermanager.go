@@ -357,15 +357,42 @@ func FilterEnvVars() []string {
 	return FilterEnvVarsWithBlacklist(nil)
 }
 
+// hostOnlyPathMarkers lists path prefixes that only exist on hosts with a
+// non-FHS layout (Guix System, NixOS). Environment variables whose value
+// references any of them point to directories that cannot exist inside a
+// container, so they are dropped automatically regardless of their name:
+// no per-variable enumeration to maintain, new host profiles are covered
+// as they appear.
+var hostOnlyPathMarkers = []string{
+	"/gnu/",               // Guix store & profiles
+	"/nix/",               // Nix store & profiles
+	"/run/current-system", // Guix/NixOS system generations
+}
+
+// valueReferencesHostOnlyPath reports whether an environment variable value
+// contains a path that only exists on the host.
+func valueReferencesHostOnlyPath(value string) bool {
+	for _, marker := range hostOnlyPathMarkers {
+		if strings.Contains(value, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // FilterEnvVarsWithBlacklist filters the current environment like
-// FilterEnvVars, additionally dropping every variable whose name matches one
-// of extraBlacklist (exact names or colon/comma-separated lists of names).
+// FilterEnvVars, additionally dropping:
 //
-// This is the entry point for the user-facing env blacklist: hosts with a
-// non-FHS layout (NixOS, Guix System) export variables like SSL_CERT_FILE or
-// GUILE_LOAD_PATH pointing into host-only store paths; leaking them into the
-// container makes the container's own tools pick up paths that do not exist
-// inside it.
+//   - every variable whose name matches one of extraBlacklist (exact names,
+//     trailing-* wildcards like GUIX_*, or colon/comma-separated lists of
+//     those), and
+//   - every variable whose value references a host-only store path
+//     (/gnu/..., /nix/..., /run/current-system/...), which cannot exist
+//     inside the container regardless of the variable's name.
+//
+// The value-based rule is what makes non-FHS hosts (Guix System, NixOS) work
+// without any per-variable enumeration: leaked variables like SSL_CERT_FILE
+// or GUILE_LOAD_PATH all point into the host store, so they are all caught.
 func FilterEnvVarsWithBlacklist(extraBlacklist []string) []string {
 	result := []string{}
 
@@ -389,11 +416,18 @@ func FilterEnvVarsWithBlacklist(extraBlacklist []string) []string {
 	}
 
 	// Flatten the user blacklist: each entry may be a comma or colon
-	// separated list of variable names.
+	// separated list of variable names. Trailing * wildcards (GUIX_*)
+	// become prefix matches.
 	blacklist := map[string]struct{}{}
+	prefixes := []string{}
 	for _, entry := range extraBlacklist {
 		for _, name := range strings.FieldsFunc(entry, func(r rune) bool { return r == ',' || r == ':' }) {
-			if name = strings.TrimSpace(name); name != "" {
+			if name = strings.TrimSpace(name); name == "" {
+				continue
+			}
+			if strings.HasSuffix(name, "*") && len(name) > 1 {
+				prefixes = append(prefixes, strings.TrimSuffix(name, "*"))
+			} else {
 				blacklist[name] = struct{}{}
 			}
 		}
@@ -426,8 +460,22 @@ func FilterEnvVarsWithBlacklist(extraBlacklist []string) []string {
 				break
 			}
 		}
+		if _, userExcluded := blacklist[key]; !excluded && !userExcluded {
+			for _, prefix := range prefixes {
+				if strings.HasPrefix(key, prefix) {
+					excluded = true
+					break
+				}
+			}
+		}
 
-		if _, userExcluded := blacklist[key]; excluded || userExcluded || xdgDirsPattern.MatchString(key) {
+		// Drop variables whose value references host-only store paths
+		// (/gnu/..., /nix/...): those cannot exist inside the container.
+		if !excluded && valueReferencesHostOnlyPath(parts[1]) {
+			excluded = true
+		}
+
+		if excluded || xdgDirsPattern.MatchString(key) {
 			continue
 		}
 
