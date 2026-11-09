@@ -605,6 +605,50 @@ export_application()
 			"/run/host${host_home}/.local/share/applications/${desktop_home_file}"
 	done
 
+	# Register URL scheme handlers (x-scheme-handler/* entries from the
+	# MimeType key of the exported desktop file) in the host's
+	# mimeapps.list, so links of those schemes open in the container app
+	# when clicked on the host.
+	# Like the desktop files above, we write through /run/host, which is
+	# where the host's root filesystem is mounted inside the container.
+	if [ "${exported_delete}" -eq 0 ]; then
+		target_desktop_file="/run/host${host_home}/.local/share/applications/${desktop_home_file}"
+		schemes=$(
+			grep -E '^MimeType=' "${target_desktop_file}" 2> /dev/null |
+				grep -oE 'x-scheme-handler/[a-zA-Z0-9+.-]+' |
+				sort -u || :
+		)
+		if [ -n "${schemes}" ]; then
+			host_mimeapps="/run/host${host_home}/.config/mimeapps.list"
+			host_defaults="/run/host${host_home}/.local/share/applications/defaults.list"
+			mkdir -p "$(dirname "${host_mimeapps}")" "$(dirname "${host_defaults}")" 2> /dev/null || :
+			touch "${host_mimeapps}" "${host_defaults}" 2> /dev/null || :
+			for mfile in "${host_mimeapps}" "${host_defaults}"; do
+				for scheme in ${schemes}; do
+					# remove previous entries for this scheme, then add ours
+					# shellcheck disable=SC2312 # best-effort registration, do not fail the export
+					grep -v "^${scheme}=" "${mfile}" > "${mfile}.tmp" 2> /dev/null || :
+					if ! grep -q '^\[Default Applications\]' "${mfile}.tmp" 2> /dev/null; then
+						printf '\n[Default Applications]\n' >> "${mfile}.tmp" 2> /dev/null || :
+					fi
+					printf '%s=%s\n' "${scheme}" "${desktop_home_file}" >> "${mfile}.tmp" 2> /dev/null || :
+					mv -f "${mfile}.tmp" "${mfile}" 2> /dev/null || :
+				done
+			done
+			printf "Registered URL scheme handler(s): %s\n" "$(echo "${schemes}" | tr '\n' ' ')"
+		fi
+	else
+		# Deleting an export: clean up our scheme registrations for it
+		host_mimeapps="/run/host${host_home}/.config/mimeapps.list"
+		host_defaults="/run/host${host_home}/.local/share/applications/defaults.list"
+		for mfile in "${host_mimeapps}" "${host_defaults}"; do
+			[ -e "${mfile}" ] || continue
+			# shellcheck disable=SC2312 # best-effort cleanup, do not fail the delete
+			grep -v "=${desktop_home_file}\$" "${mfile}" > "${mfile}.tmp" 2> /dev/null || :
+			mv -f "${mfile}.tmp" "${mfile}" 2> /dev/null || :
+		done
+	fi
+
 	# Update the desktop files database to ensure exported applications will
 	# show up in the taskbar/desktop menu/whatnot right after running this
 	# script.
