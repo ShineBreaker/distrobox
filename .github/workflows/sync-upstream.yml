@@ -1,0 +1,264 @@
+name: Sync upstream
+
+# 每天 18:00 UTC（北京时间 02:00）把 GitHub parent 的默认分支合并进本 fork 的默认分支。
+# 已经包含上游时直接成功结束；拉取、合并冲突、推送任一失败都让 job 失败，并开 issue
+# （若已有打开的 upstream-sync issue，则只追加带运行链接的评论）。
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+# 不申请 workflows: write。GITHUB_TOKEN 因此无法推送改动了 .github/workflows/ 的提交，
+# 这种失败要靠可选 secret UPSTREAM_SYNC_TOKEN（PAT，repo + workflow）来推。
+permissions: {}
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # push the merged default branch
+      issues: write # create the upstream-sync label and open or comment on failure issues
+    env:
+      GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch upstream
+        run: |
+          set -euo pipefail
+          reason="${RUNNER_TEMP}/upstream-sync-reason.txt"
+          if ! meta="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '[.parent.full_name // "", .parent.default_branch // "", .default_branch // ""] | @tsv')"; then
+            printf '%s\n' "读取 GitHub parent 失败，无法确定上游仓库。" > "${reason}"
+            exit 1
+          fi
+          parent_repo="$(printf '%s' "${meta}" | cut -f1)"
+          parent_branch="$(printf '%s' "${meta}" | cut -f2)"
+          fork_branch="$(printf '%s' "${meta}" | cut -f3)"
+          if [ -z "${parent_repo}" ] || [ -z "${parent_branch}" ] || [ -z "${fork_branch}" ]; then
+            printf '%s\n' "此仓库没有 GitHub parent 或默认分支，无法同步上游。" > "${reason}"
+            exit 1
+          fi
+          valid_repo='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+          valid_branch='^[A-Za-z0-9._/-]+$'
+          if ! printf '%s' "${parent_repo}" | grep -Eq "${valid_repo}" \
+            || printf '%s' "${parent_repo}" | grep -q '\.\.' \
+            || ! printf '%s' "${parent_branch}" | grep -Eq "${valid_branch}" \
+            || printf '%s' "${parent_branch}" | grep -q '\.\.' \
+            || ! printf '%s' "${fork_branch}" | grep -Eq "${valid_branch}" \
+            || printf '%s' "${fork_branch}" | grep -q '\.\.'; then
+            printf '%s\n' "GitHub API 返回的 parent 或默认分支无法安全使用。" > "${reason}"
+            exit 1
+          fi
+          printf '%s\n' "${parent_repo}" "${parent_branch}" "${fork_branch}" > "${RUNNER_TEMP}/upstream-sync-meta.txt"
+          if ! git checkout "${fork_branch}"; then
+            printf '%s\n' "无法检出 fork 默认分支 ${fork_branch}。" > "${reason}"
+            exit 1
+          fi
+          git remote remove upstream >/dev/null 2>&1 || true
+          git remote add upstream "https://github.com/${parent_repo}.git"
+          if ! git fetch --no-tags upstream "${parent_branch}"; then
+            printf '%s\n' "拉取上游 ${parent_repo}@${parent_branch} 失败。" > "${reason}"
+            exit 1
+          fi
+          echo "上游 ${parent_repo}@${parent_branch} -> $(git rev-parse --short "upstream/${parent_branch}")"
+          echo "fork ${fork_branch} -> $(git rev-parse --short HEAD)"
+
+      - name: Merge upstream
+        run: |
+          set -euo pipefail
+          reason="${RUNNER_TEMP}/upstream-sync-reason.txt"
+          parent_repo="$(sed -n '1p' "${RUNNER_TEMP}/upstream-sync-meta.txt")"
+          parent_branch="$(sed -n '2p' "${RUNNER_TEMP}/upstream-sync-meta.txt")"
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git merge-base --is-ancestor "upstream/${parent_branch}" HEAD; then
+            echo "已包含上游 ${parent_repo}@${parent_branch}，无需推送。"
+            exit 0
+          fi
+          echo "待合并的上游提交："
+          git log --oneline --no-decorate -n 30 "HEAD..upstream/${parent_branch}" || true
+          before="$(git rev-parse HEAD)"
+          if git merge --no-edit "upstream/${parent_branch}"; then
+            if git diff --name-only "${before}" HEAD -- .github/workflows | grep -q .; then
+              : > "${RUNNER_TEMP}/upstream-sync-workflows-changed"
+              echo "本次合并改动了 .github/workflows/。若未配置 UPSTREAM_SYNC_TOKEN，推送可能被 GitHub 拒绝。"
+            fi
+            : > "${RUNNER_TEMP}/upstream-sync-do-push"
+            exit 0
+          fi
+          git diff --name-only --diff-filter=U > "${RUNNER_TEMP}/upstream-sync-conflicts.txt" || true
+          git merge --abort || true
+          printf '%s\n' "合并上游 ${parent_repo}@${parent_branch} 失败。" > "${reason}"
+          exit 1
+
+      - name: Push merged branch
+        run: |
+          set -euo pipefail
+          if [ ! -f "${RUNNER_TEMP}/upstream-sync-do-push" ]; then
+            echo "没有新的合并需要推送。"
+            exit 0
+          fi
+          reason="${RUNNER_TEMP}/upstream-sync-reason.txt"
+          fork_branch="$(sed -n '3p' "${RUNNER_TEMP}/upstream-sync-meta.txt")"
+          askpass="${RUNNER_TEMP}/upstream-sync-askpass.sh"
+          cleanup() {
+            rm -f "${askpass}"
+          }
+          trap cleanup EXIT
+          umask 077
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'case "$1" in' \
+            '  *Username*) printf "%s\n" "x-access-token" ;;' \
+            '  *) printf "%s\n" "${GH_TOKEN}" ;;' \
+            'esac' > "${askpass}"
+          chmod 700 "${askpass}"
+          git config --local --unset-all "http.https://github.com/.extraheader" || true
+          git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          push_log="${RUNNER_TEMP}/upstream-sync-push-err.txt"
+          if ! GIT_ASKPASS="${askpass}" GIT_TERMINAL_PROMPT=0 \
+            git -c credential.helper= push origin "HEAD:${fork_branch}" 2>&1 | tee "${push_log}"; then
+            if [ -f "${RUNNER_TEMP}/upstream-sync-workflows-changed" ]; then
+              printf '%s\n' "推送到 origin/${fork_branch} 失败。本次合并改动了 .github/workflows/。GITHUB_TOKEN 没有 workflows 权限，无法推送 workflow 文件；请配置 secret UPSTREAM_SYNC_TOKEN（PAT，需要 repo 与 workflow 权限）。" > "${reason}"
+            else
+              printf '%s\n' "推送到 origin/${fork_branch} 失败。" > "${reason}"
+            fi
+            exit 1
+          fi
+
+      - name: Report failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}"
+          parent_repo="（未能解析）"
+          parent_branch="（未能解析）"
+          fork_branch="${GITHUB_REF_NAME}"
+          if [ -f "${RUNNER_TEMP}/upstream-sync-meta.txt" ]; then
+            parent_repo="$(sed -n '1p' "${RUNNER_TEMP}/upstream-sync-meta.txt")"
+            parent_branch="$(sed -n '2p' "${RUNNER_TEMP}/upstream-sync-meta.txt")"
+            fork_branch="$(sed -n '3p' "${RUNNER_TEMP}/upstream-sync-meta.txt")"
+          fi
+          reason="同步任务失败。请打开运行日志，确认是拉取上游、合并冲突还是推送失败。"
+          if [ -s "${RUNNER_TEMP}/upstream-sync-reason.txt" ]; then
+            reason="$(cat "${RUNNER_TEMP}/upstream-sync-reason.txt")"
+          fi
+          if [ -s "${RUNNER_TEMP}/upstream-sync-conflicts.txt" ]; then
+            conflicts="$(cat "${RUNNER_TEMP}/upstream-sync-conflicts.txt")"
+          else
+            conflicts="无"
+          fi
+          incoming=""
+          if [ "${parent_branch}" != "（未能解析）" ] \
+            && git rev-parse --verify --quiet "upstream/${parent_branch}" >/dev/null 2>&1; then
+            incoming="$(git log --oneline --no-decorate -n 20 "HEAD..upstream/${parent_branch}" 2>/dev/null || true)"
+          fi
+          push_excerpt=""
+          if [ -s "${RUNNER_TEMP}/upstream-sync-push-err.txt" ]; then
+            push_excerpt="$(grep -v -E 'gho_|github_pat_|ghp_|ghs_|x-access-token|AUTHORIZATION|[Bb]earer |basic [A-Za-z0-9+/=]{20,}' \
+              "${RUNNER_TEMP}/upstream-sync-push-err.txt" | head -n 30 || true)"
+          fi
+          body_file="${RUNNER_TEMP}/upstream-sync-body.md"
+          {
+            printf '%s\n' "上游同步失败，fork 的默认分支未更新。"
+            printf '%s\n' "运行记录：${run_url}"
+            printf '%s\n' ""
+            printf '%s\n' "### 失败情况"
+            printf '%s\n' "- 原因：${reason}"
+            printf '%s\n' "- 上游：\`${parent_repo}\` @ \`${parent_branch}\`"
+            printf '%s\n' "- 目标分支：\`${fork_branch}\`"
+            printf '%s\n' "- 冲突文件："
+            printf '%s\n' '```'
+            printf '%s\n' "${conflicts}"
+            printf '%s\n' '```'
+            if [ -n "${incoming}" ]; then
+              printf '%s\n' "- 尚未合入的上游提交："
+              printf '%s\n' '```'
+              printf '%s\n' "${incoming}"
+              printf '%s\n' '```'
+            fi
+            if [ -n "${push_excerpt}" ]; then
+              printf '%s\n' "- 推送输出（已去掉凭证）："
+              printf '%s\n' '```'
+              printf '%s\n' "${push_excerpt}"
+              printf '%s\n' '```'
+            fi
+            printf '%s\n' ""
+            printf '%s\n' "### 若失败出在推送 workflow 文件"
+            if [ -f "${RUNNER_TEMP}/upstream-sync-workflows-changed" ]; then
+              printf '%s\n' "本次合并改动了 \`.github/workflows/\`。"
+            fi
+            printf '%s\n' "GITHUB_TOKEN 不能推送修改 \`.github/workflows/\` 的提交（缺少 workflows 权限）。请在仓库 Settings → Secrets and variables → Actions 添加 secret \`UPSTREAM_SYNC_TOKEN\`：一个具备 \`repo\` 与 \`workflow\` 权限的 PAT。工作流会优先用该 secret 代替 GITHUB_TOKEN 推送，并用它创建或评论 issue。"
+            printf '%s\n' ""
+            printf '%s\n' "### 本地修复"
+            if [ -f "${RUNNER_TEMP}/upstream-sync-meta.txt" ]; then
+              printf '%s\n' '```bash'
+              printf '%s\n' "git fetch https://github.com/${parent_repo}.git ${parent_branch}"
+              printf '%s\n' "git checkout ${fork_branch}"
+              printf '%s\n' "git merge FETCH_HEAD"
+              printf '%s\n' "# 解决冲突，保留本 fork 自己的改动，然后："
+              printf '%s\n' "git push origin ${fork_branch}"
+              printf '%s\n' '```'
+            else
+              printf '%s\n' "上游仓库没能解析。请先看运行日志里的 GitHub parent，再在本地 fetch 该仓库的默认分支并合并进本 fork 的默认分支。"
+            fi
+          } > "${body_file}"
+
+          gh label create upstream-sync --repo "${GITHUB_REPOSITORY}" \
+            --color B60205 \
+            --description "上游同步失败，需要人工处理" \
+            --force || true
+
+          existing="$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open --label upstream-sync --limit 1 --json number --jq '.[0].number // empty' || true)"
+          if ! printf '%s' "${existing}" | grep -Eq '^[0-9]+$'; then
+            existing="$(gh api "repos/${GITHUB_REPOSITORY}/issues?state=open&labels=upstream-sync&per_page=1" --jq '.[0].number // empty' || true)"
+          fi
+          if ! printf '%s' "${existing}" | grep -Eq '^[0-9]+$'; then
+            existing=""
+          fi
+
+          if [ -n "${existing}" ]; then
+            if gh issue comment "${existing}" --repo "${GITHUB_REPOSITORY}" --body-file "${body_file}"; then
+              echo "已评论已有 issue #${existing}"
+              exit 0
+            fi
+            echo "::warning::评论 #${existing} 失败，改用 REST API 重试"
+            if jq -n --rawfile body "${body_file}" '{body: $body}' \
+              | gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${existing}/comments" --input - --jq .html_url; then
+              echo "已通过 REST 评论 #${existing}"
+              exit 0
+            fi
+            echo "::error::已有打开的 upstream-sync issue #${existing}，但无法评论。运行记录：${run_url}"
+            exit 1
+          fi
+
+          title="上游同步失败 $(date -u +%F)"
+          if gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body-file "${body_file}" --label upstream-sync; then
+            exit 0
+          fi
+          echo "::warning::带 upstream-sync 标签创建 issue 失败，改为不带标签重试"
+          if gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body-file "${body_file}"; then
+            exit 0
+          fi
+          echo "::warning::gh issue create 失败（常见于 GraphQL createIssue：Resource not accessible by integration）。改用 REST API 重试。"
+          if jq -n --rawfile body "${body_file}" --arg title "${title}" '{title: $title, body: $body, labels: ["upstream-sync"]}' \
+            | gh api --method POST "repos/${GITHUB_REPOSITORY}/issues" --input - --jq .html_url; then
+            exit 0
+          fi
+          echo "::warning::带标签的 REST 创建失败，改为不带标签再试"
+          if jq -n --rawfile body "${body_file}" --arg title "${title}" '{title: $title, body: $body}' \
+            | gh api --method POST "repos/${GITHUB_REPOSITORY}/issues" --input - --jq .html_url; then
+            exit 0
+          fi
+          echo "::error::无法创建或评论上游同步 issue。请确认仓库已开启 Issues，Actions 工作流权限为 Read and write，或配置 secret UPSTREAM_SYNC_TOKEN。运行记录：${run_url}"
+          exit 1
