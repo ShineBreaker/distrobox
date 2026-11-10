@@ -168,8 +168,9 @@ func enterAction(ctx context.Context, cmd *cli.Command, cfg *config.Values) erro
 // envBlacklist merges the --env-blacklist flag values with the
 // DBX_ENV_BLACKLIST environment variable and the env_blacklist config key
 // (comma or colon separated). On top of this, variables whose values
-// reference host-only store paths (/gnu/, /nix/, /run/current-system) are
-// always dropped automatically — see FilterEnvVarsWithBlacklist.
+// reference host-only store or profile paths (/gnu/, /nix/,
+// /run/current-system, ~/.guix-home/profile, ~/.guix-profile, ...) are always
+// dropped automatically — see FilterEnvVarsWithBlacklist.
 func envBlacklist(cmd *cli.Command, cfg *config.Values) []string {
 	blacklist := cmd.StringSlice("env-blacklist")
 	if cfg != nil && cfg.EnvBlacklist != "" {

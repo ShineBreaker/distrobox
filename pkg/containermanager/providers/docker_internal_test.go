@@ -240,6 +240,18 @@ func TestBuildContainerPath(t *testing.T) {
 			want:      "/custom/path:/usr/local/sbin:/usr/sbin:/usr/local/bin:/usr/bin:/sbin:/bin",
 		},
 		{
+			name:      "host-only store and profile segments are dropped",
+			cleanPath: false,
+			hostPath:  "/gnu/store/abc-podman/bin:/home/u/.guix-home/profile/bin:/run/current-system/profile/bin:/home/u/.local/bin:/usr/bin:/bin",
+			want:      "/home/u/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin",
+		},
+		{
+			name:      "only host-only segments - falls back to standard paths",
+			cleanPath: false,
+			hostPath:  "/gnu/store/abc-podman/bin",
+			want:      "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		},
+		{
 			name: "empty containerPath with empty hostPath",
 			want: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		},

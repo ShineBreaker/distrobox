@@ -33,9 +33,10 @@ graphical apps (X11/Wayland), and audio.
 	--env-blacklist:	environment variables NOT to forward into the container when entering it
 					(comma or colon separated lists, trailing * wildcards and the DBX_ENV_BLACKLIST
 					variable / env_blacklist config key are honored too).
-					variables whose values reference host-only store paths (/gnu/, /nix/,
-					/run/current-system) are always dropped automatically — this flag is for
-					extra, name-based exclusions
+					variables whose values reference host-only store or profile paths
+					(/gnu/, /nix/, /run/current-system, ~/.guix-home/profile,
+					~/.guix-profile, ...) are always dropped automatically — this flag is
+					for extra, name-based exclusions
 	--volume:		additional volumes to add to the container
 	--additional-flags/-a:	additional flags to pass to the container manager command
 	--additional-packages/-ap:	additional packages to install during initial container setup

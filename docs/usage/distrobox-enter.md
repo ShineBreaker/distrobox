@@ -22,9 +22,10 @@ If using it inside a script, an application, or a service, you can specify the
 	--env-blacklist:	environment variables NOT to forward into the container
 					(comma or colon separated lists, trailing * wildcards and the DBX_ENV_BLACKLIST
 					variable / env_blacklist config key are honored too).
-					variables whose values reference host-only store paths (/gnu/, /nix/,
-					/run/current-system) are always dropped automatically — this flag is for
-					extra, name-based exclusions
+					variables whose values reference host-only store or profile paths
+					(/gnu/, /nix/, /run/current-system, ~/.guix-home/profile,
+					~/.guix-profile, ...) are always dropped automatically — this flag is
+					for extra, name-based exclusions
 	--clean-path/-c:	reset PATH inside the container to FHS standard
 	--additional-flags/-a:	additional flags to pass to the container manager command
 	--yes/-y:		non-interactive, auto-create the container if it does not exist

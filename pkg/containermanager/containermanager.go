@@ -283,6 +283,14 @@ func BuildContainerPath(cleanPath bool, hostPath string, containerPath string) s
 		return strings.Join(standardPaths, ":")
 	}
 
+	// Host PATH segments that live only on the host (a Guix/Nix store or
+	// profile) cannot exist inside the container: dropping them keeps the
+	// container PATH free of dead directories while preserving the rest.
+	hostPath = stripHostOnlyPathSegments(hostPath)
+	if strings.Trim(hostPath, ":") == "" {
+		hostPath = ""
+	}
+
 	// If no host PATH, use the container's PATH if available
 	if hostPath == "" {
 		if containerPath != "" {
@@ -340,7 +348,7 @@ func reorderFHSPath(path string) string {
 }
 
 func BuildXDGPaths(envVar string, standardPaths []string) string {
-	containerPaths := os.Getenv(envVar)
+	containerPaths := stripHostOnlyPathSegments(os.Getenv(envVar))
 
 	for _, sp := range standardPaths {
 		if containerPaths == "" {
@@ -358,15 +366,44 @@ func FilterEnvVars() []string {
 }
 
 // hostOnlyPathMarkers lists path prefixes that only exist on hosts with a
-// non-FHS layout (Guix System, NixOS). Environment variables whose value
-// references any of them point to directories that cannot exist inside a
-// container, so they are dropped automatically regardless of their name:
-// no per-variable enumeration to maintain, new host profiles are covered
-// as they appear.
+// non-FHS layout (Guix System, NixOS) or that are per-user profiles whose
+// contents are symlinks into such a store. Environment variables whose value
+// references any of them point to directories (or broken symlinks) that do
+// not exist inside a container, so they are dropped automatically regardless
+// of their name: no per-variable enumeration to maintain.
+//
+// A Guix home profile lives at ~/.guix-home/profile and ~/.guix-profile;
+// both are convenience symlinks into /gnu/store, so a value using them is as
+// dead inside the container as one naming /gnu/store directly.
 var hostOnlyPathMarkers = []string{
-	"/gnu/",               // Guix store & profiles
-	"/nix/",               // Nix store & profiles
-	"/run/current-system", // Guix/NixOS system generations
+	"/gnu/",                     // Guix store & profiles
+	"/nix/",                     // Nix store & profiles
+	"/run/current-system",       // Guix/NixOS system generations
+	"/.guix-home",               // Guix home profile symlink
+	"/.guix-profile",            // Guix per-user profile symlink
+	"/.config/guix/current",     // Guix current profile symlink
+	"/.local/state/nix/profile", // Nix per-user profile symlink
+}
+
+// stripHostOnlyPathSegments removes colon-separated segments that reference a
+// host-only path, preserving order and the remaining (possibly empty)
+// segments. Used for PATH and XDG_*_DIRS, where dropping the whole variable
+// would leave the container without usable defaults.
+func stripHostOnlyPathSegments(value string) string {
+	if value == "" {
+		return value
+	}
+
+	segments := strings.Split(value, ":")
+	kept := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		if segment != "" && valueReferencesHostOnlyPath(segment) {
+			continue
+		}
+		kept = append(kept, segment)
+	}
+
+	return strings.Join(kept, ":")
 }
 
 // valueReferencesHostOnlyPath reports whether an environment variable value

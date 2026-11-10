@@ -107,6 +107,15 @@ func TestBuildXDGPaths(t *testing.T) {
 		containermanager.BuildXDGPaths("DBX_TEST_XDG_UNSET_UNIQUE_9421", []string{"/usr/local/share", "/usr/share"}))
 }
 
+// TestBuildXDGPathsDropsHostOnlySegments pins that a Guix/Nix host's
+// XDG_*_DIRS entries (which point at the store or a home profile) are removed
+// segment by segment, leaving the container-side standard paths behind.
+func TestBuildXDGPathsDropsHostOnlySegments(t *testing.T) {
+	t.Setenv("DBX_TEST_XDG_STORE", "/gnu/store/abc-share:/home/u/.guix-home/profile/share:/home/u/.local/state/nix/profile/share:/usr/local/share")
+	assert.Equal(t, "/usr/local/share:/usr/share",
+		containermanager.BuildXDGPaths("DBX_TEST_XDG_STORE", []string{"/usr/local/share", "/usr/share"}))
+}
+
 // TestFilterEnvVarsWithBlacklist pins the user-facing env blacklist: extra
 // names (including comma/colon-separated lists) are dropped on top of the
 // built-in exclusions, without affecting other variables.
@@ -156,4 +165,32 @@ func TestFilterEnvVarsDropsHostOnlyStorePaths(t *testing.T) {
 	assert.False(t, has("SYSTEM_WIDE="), "value in /run/current-system must be dropped")
 	assert.True(t, has("DBX_TEST_NORMAL="), "normal FHS value must survive")
 	assert.True(t, has("NOTES_DIR="), "substring 'gnu' outside a path marker must survive")
+}
+
+// TestFilterEnvVarsDropsHostOnlyProfilePaths pins the profile half of the
+// value-based rule: Guix home/profile and Nix per-user profile paths are
+// convenience symlinks into the store, so a value naming them is just as dead
+// inside a container as one naming /gnu/store directly. This is what keeps
+// SSL_CERT_FILE, XDG_*_DIRS and the GUIX_* family from leaking on a Guix host.
+func TestFilterEnvVarsDropsHostOnlyProfilePaths(t *testing.T) {
+	t.Setenv("SSL_CERT_FILE", "/home/user/.guix-home/profile/etc/ssl/certs/ca-certificates.crt")
+	t.Setenv("GUIX_PROFILE", "/home/user/.guix-profile")
+	t.Setenv("GUIX_LOCPATH", "/home/u/.guix-home/profile/lib/locale")
+	t.Setenv("NIX_PROFILE_BIN", "/home/u/.local/state/nix/profile/bin")
+	t.Setenv("DBX_TEST_NORMAL_PROFILE", "/home/u/.config/app/config.ini")
+
+	has := func(prefix string) bool {
+		for _, e := range containermanager.FilterEnvVars() {
+			if strings.HasPrefix(e, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+
+	assert.False(t, has("SSL_CERT_FILE="), "value in ~/.guix-home/profile must be dropped")
+	assert.False(t, has("GUIX_PROFILE="), "value in ~/.guix-profile must be dropped")
+	assert.False(t, has("GUIX_LOCPATH="), "value in ~/.guix-home/profile must be dropped")
+	assert.False(t, has("NIX_PROFILE_BIN="), "value in ~/.local/state/nix/profile must be dropped")
+	assert.True(t, has("DBX_TEST_NORMAL_PROFILE="), "an ordinary config path must survive")
 }
